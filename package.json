@@ -1,0 +1,33 @@
+{
+  "name": "tui-devtools",
+  "version": "0.1.0",
+  "description": "DevTools for Ink TUI apps — component tree, state inspection, console capture for AI agents",
+  "type": "module",
+  "bin": {
+    "tui-devtools": "./dist/bin/tui-devtools.js"
+  },
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx bin/tui-devtools.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["tui", "devtools", "ink", "react", "terminal", "debugging", "ai-agent"],
+  "author": "seongsu-kang",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0"
+  }
+}
