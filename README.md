@@ -1,97 +1,199 @@
 # tui-devtools
 
-DevTools for Ink TUI apps — component tree, state inspection, console capture.
+All-in-one TUI automation + DevTools for terminal apps.
 
-Built for AI agents that need to debug terminal UI applications programmatically.
+Run, screenshot, interact, and inspect — built for AI agents.
 
-## Why
+## What It Does
 
-Tools like `agent-tui` can automate TUI apps (press keys, take screenshots), but they can only see the **screen output**. When something goes wrong, there's no way to inspect component state, view console errors, or understand the component hierarchy.
+**Works with any TUI/CLI app** — no framework dependency:
 
-`tui-devtools` bridges this gap for **Ink (React)** apps by connecting to React DevTools protocol.
+```bash
+tui-devtools start                          # Start daemon
+tui-devtools run "htop"                     # Run any TUI app in a PTY
+tui-devtools screenshot                     # Capture screen as text
+tui-devtools press q                        # Send keystrokes
+tui-devtools type "hello"                   # Type text
+tui-devtools wait "Ready"                   # Wait for text to appear
+tui-devtools kill-session                   # Kill the app
+tui-devtools stop                           # Stop daemon
+```
+
+**Bonus for Ink (React) apps** — component tree & state inspection:
+
+```bash
+tui-devtools run "DEV=true npx my-ink-app"  # Run with DevTools enabled
+tui-devtools tree                            # React component hierarchy
+tui-devtools inspect MyComponent             # Props, state, hooks
+tui-devtools find Text                       # Search components by name
+tui-devtools logs --level error              # Captured console output
+```
+
+## Install
+
+```bash
+npm install -g tui-devtools
+```
+
+## Two Layers
+
+| Layer | Works With | What You Get |
+|-------|-----------|--------------|
+| **PTY Automation** | Any TUI/CLI app | run, screenshot, press, type, wait, scroll, kill |
+| **React DevTools** | Ink apps + `DEV=true` | tree, inspect, find, logs |
+
+PTY automation works universally — Ink, Bubbletea, Ratatui, htop, vim, anything that runs in a terminal. React DevTools is an **additional layer** that activates when the app supports it.
 
 ## Quick Start
 
+### Any TUI App
+
 ```bash
-# Install
-npm install -g tui-devtools
-
-# 1. Start the DevTools server
 tui-devtools start
+tui-devtools run "npx create-next-app"
+tui-devtools wait "project name"
+tui-devtools type "my-app"
+tui-devtools press Enter
+tui-devtools screenshot
+tui-devtools kill-session
+tui-devtools stop
+```
 
-# 2. Run your Ink app with DEV=true
-DEV=true npx my-ink-app
+### Ink App with DevTools
 
-# 3. Inspect
-tui-devtools tree                    # Component hierarchy
-tui-devtools inspect CommandMode     # Props & state of a component
-tui-devtools logs                    # Console output
-tui-devtools logs --level error      # Only errors
+```bash
+tui-devtools start
+tui-devtools run "DEV=true npx my-ink-app"
+tui-devtools wait ">"
 
-# 4. Cleanup
+# Screen (what the user sees)
+tui-devtools screenshot
+
+# Structure (what React sees)
+tui-devtools tree
+tui-devtools inspect App --json
+
+# Errors (what the console says)
+tui-devtools logs --level error
+
+tui-devtools kill-session
 tui-devtools stop
 ```
 
 ## Commands
 
+### PTY Automation (Universal)
+
 | Command | Description |
 |---------|-------------|
-| `start` | Start DevTools server daemon |
+| `start` | Start daemon (WebSocket + IPC server) |
 | `stop` | Stop daemon |
-| `status` | Show connection status |
-| `tree` | Print component tree |
-| `inspect <name>` | Show props/state/hooks for a component |
-| `find <name>` | Find components by name |
-| `logs` | Show captured console logs |
+| `run "<command>"` | Run command in PTY (shell auto-wrapped) |
+| `screenshot` | Capture current terminal screen |
+| `screenshot --strip-ansi` | Without ANSI color codes |
+| `press <key> [key...]` | Send keystrokes (Enter, Tab, ArrowDown, Ctrl-c, etc.) |
+| `type "<text>"` | Type text |
+| `wait "<text>"` | Wait for text to appear on screen |
+| `wait "<text>" --timeout 5000` | With custom timeout |
+| `scroll up/down [N]` | Scroll viewport |
+| `kill-session` | Kill PTY process |
+| `sessions` | List running PTY sessions |
+| `status` | Show daemon & connection status |
 
-## With agent-tui (AI Agent Workflow)
+### React DevTools (Ink Apps Only)
+
+| Command | Description |
+|---------|-------------|
+| `tree` | Component hierarchy |
+| `tree --depth N` | Limit depth |
+| `tree --json` | JSON output |
+| `inspect <name>` | Props, state, hooks |
+| `inspect --id <N>` | By fiber ID |
+| `find <name>` | Search components by name |
+| `logs` | Captured console.log/warn/error |
+| `logs --level error` | Filter by level |
+| `logs --tail N` | Last N entries |
+
+> React DevTools requires: `react-devtools-core` installed in the app + `DEV=true` env var.
+
+## Key Names
+
+| Key | Name |
+|-----|------|
+| Enter | `Enter` |
+| Tab | `Tab` |
+| Escape | `Escape` |
+| Arrows | `ArrowUp` `ArrowDown` `ArrowLeft` `ArrowRight` |
+| Backspace | `Backspace` |
+| Space | `Space` |
+| Ctrl+C | `Ctrl-c` |
+| Multiple | `press ArrowDown ArrowDown Enter` |
+
+## Session Management
 
 ```bash
-# Start devtools first
-tui-devtools -s myapp start
+# Daemon-level sessions (-s) for isolation
+tui-devtools -s project1 start
+tui-devtools -s project2 start --port 8098
 
-# Start the TUI app
-agent-tui run -s myapp "DEV=true npx my-ink-app"
+# Multiple PTY sessions within one daemon (--sid)
+tui-devtools -s test run "app1" --sid app1
+tui-devtools -s test run "app2" --sid app2
+tui-devtools -s test screenshot --sid app1
+```
 
-# Visual: what's on screen
-agent-tui -s myapp screenshot
+## Output Formats
 
-# Structural: what's in React
-tui-devtools -s myapp tree
-
-# Debug: what went wrong
-tui-devtools -s myapp logs --level error
-tui-devtools -s myapp inspect MyComponent --json
+```bash
+tui-devtools screenshot                # Text (human-readable)
+tui-devtools screenshot --json         # JSON (automation)
+tui-devtools tree --json               # JSON component tree
+tui-devtools sessions --json           # JSON session list
 ```
 
 ## How It Works
 
 ```
-Ink App (DEV=true)                    tui-devtools daemon
-─────────────────                    ──────────────────
-react-devtools-core                  WebSocket server (:8097)
-  connectToDevTools() ──WebSocket──► Parse fiber tree operations
-                                     Store component tree + logs
-                                          │
-                                     Unix socket IPC
-                                          │
-                                     CLI commands ◄── AI agent
-```
-
-## Options
-
-```
--s, --session <name>    Session name (default: "default")
--p, --port <port>       DevTools port (default: 8097)
---json                  JSON output for all commands
+┌─────────────────────────────────────────────────────┐
+│ tui-devtools daemon                                 │
+│                                                     │
+│  ┌──────────────┐    ┌───────────────────────────┐  │
+│  │ PTY Manager  │    │ React DevTools Server     │  │
+│  │ (node-pty +  │    │ (WebSocket :8097)         │  │
+│  │  xterm)      │    │                           │  │
+│  │              │    │ Ink app ──ws──► fiber tree │  │
+│  │ Any TUI app  │    │              ► console    │  │
+│  └──────┬───────┘    └───────────┬───────────────┘  │
+│         │                        │                  │
+│         └────────┬───────────────┘                  │
+│                  │ Unix socket IPC                  │
+└──────────────────┼──────────────────────────────────┘
+                   │
+            CLI commands ◄── AI agent / human
 ```
 
 ## Requirements
 
 - Node.js >= 18
-- Target app must use **Ink** (React-based TUI framework)
-- `react-devtools-core` must be installed in the target app
-- Run the app with `DEV=true` environment variable
+- macOS or Linux (PTY support)
+
+**For React DevTools features (optional):**
+- Target app must use Ink (React-based TUI)
+- `react-devtools-core` package installed in the app
+- App launched with `DEV=true` environment variable
+
+## Troubleshooting
+
+```bash
+# posix_spawnp failed (macOS)
+chmod +x $(npm root -g)/tui-devtools/node_modules/node-pty/prebuilds/darwin-*/spawn-helper
+
+# Daemon status
+tui-devtools -s test status
+
+# Debug logs
+cat ~/.tui-devtools/test.log
+```
 
 ## License
 
