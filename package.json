@@ -1,7 +1,15 @@
 {
   "name": "tui-devtools",
   "version": "0.1.0",
-  "description": "DevTools for Ink TUI apps — component tree, state inspection, console capture for AI agents",
+  "description": "All-in-one TUI automation + DevTools — run, screenshot, interact, and inspect React component trees in terminal apps. Built for AI agents.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seongsu-kang/tui-devtools.git"
+  },
+  "homepage": "https://github.com/seongsu-kang/tui-devtools#readme",
+  "bugs": {
+    "url": "https://github.com/seongsu-kang/tui-devtools/issues"
+  },
   "type": "module",
   "bin": {
     "tui-devtools": "./dist/bin/tui-devtools.js"
@@ -21,7 +29,11 @@
     "react",
     "terminal",
     "debugging",
-    "ai-agent"
+    "ai-agent",
+    "pty",
+    "automation",
+    "screenshot",
+    "testing"
   ],
   "author": "seongsu-kang",
   "license": "MIT",
