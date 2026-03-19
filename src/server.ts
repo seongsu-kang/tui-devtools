@@ -17,6 +17,7 @@ export interface ServerOptions {
   onLog?: (entry: LogEntry) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
+  debugLog?: (msg: string) => void;
 }
 
 export class DevToolsServer {
@@ -28,7 +29,7 @@ export class DevToolsServer {
   constructor(options: ServerOptions) {
     this.options = options;
     this.store = new DevToolsStore();
-    this.bridge = new DevToolsBridge(this.store, options.onLog);
+    this.bridge = new DevToolsBridge(this.store, options.onLog, options.debugLog);
   }
 
   start(): Promise<void> {

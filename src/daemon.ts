@@ -103,6 +103,7 @@ export async function startDaemon(session: string, port: number): Promise<void> 
     },
     onConnect: () => log('App connected'),
     onDisconnect: () => log('App disconnected'),
+    debugLog: (msg: string) => log(msg),
   });
 
   await devtools.start();

@@ -35,9 +35,12 @@ export class DevToolsBridge {
   private store: DevToolsStore;
   private onLog?: (entry: LogEntry) => void;
 
-  constructor(store: DevToolsStore, onLog?: (entry: LogEntry) => void) {
+  private debugLog?: (msg: string) => void;
+
+  constructor(store: DevToolsStore, onLog?: (entry: LogEntry) => void, debugLog?: (msg: string) => void) {
     this.store = store;
     this.onLog = onLog;
+    this.debugLog = debugLog;
   }
 
   attach(ws: WebSocket): void {
@@ -46,10 +49,12 @@ export class DevToolsBridge {
 
     ws.on('message', (data: Buffer | string) => {
       try {
-        const msg = JSON.parse(typeof data === 'string' ? data : data.toString());
+        const raw = typeof data === 'string' ? data : data.toString();
+        const msg = JSON.parse(raw);
+        this.debugLog?.(`[MSG] event=${msg.event} payload_type=${typeof msg.payload} payload_keys=${msg.payload && typeof msg.payload === 'object' ? Object.keys(msg.payload).join(',') : Array.isArray(msg.payload) ? `array[${msg.payload.length}]` : String(msg.payload)?.slice(0, 80)}`);
         this.handleMessage(msg);
-      } catch {
-        // ignore parse errors
+      } catch (e) {
+        this.debugLog?.(`[PARSE_ERR] ${(e as Error).message} raw=${(typeof data === 'string' ? data : data.toString()).slice(0, 200)}`);
       }
     });
 
@@ -61,9 +66,22 @@ export class DevToolsBridge {
 
   private handleMessage(msg: { event: string; payload?: unknown }): void {
     switch (msg.event) {
-      case 'operations':
-        this.handleOperations(msg.payload as number[]);
+      case 'operations': {
+        // Payload may be a plain object with numeric keys (serialized from Int32Array)
+        let ops: number[];
+        if (Array.isArray(msg.payload)) {
+          ops = msg.payload;
+        } else if (msg.payload && typeof msg.payload === 'object') {
+          const obj = msg.payload as Record<string, number>;
+          const keys = Object.keys(obj).map(Number).sort((a, b) => a - b);
+          ops = keys.map(k => obj[String(k)]!);
+        } else {
+          break;
+        }
+        this.debugLog?.(`[OPS] parsed ${ops.length} entries: [${ops.join(',')}]`);
+        this.handleOperations(ops);
         break;
+      }
 
       case 'inspectedElement':
         this.handleInspectedElement(msg.payload);
@@ -112,7 +130,13 @@ export class DevToolsBridge {
   private handleOperations(ops: number[]): void {
     if (!ops || ops.length === 0) return;
 
-    // Operations format: [rendererID, rootFiberID, ...operations]
+    // Operations format:
+    // [rendererID, rootFiberID, stringTableSize, ...stringTable, ...operations]
+    //
+    // String table entries: [charCount, ...charCodes]
+    // Operations use string table INDICES (not inline char codes)
+    // ADD: [op, id, elementType, parentId, ownerID, displayNameIndex, keyIndex]
+
     let i = 0;
     const rendererId = ops[i++]!;
     const rootId = ops[i++]!;
@@ -122,50 +146,36 @@ export class DevToolsBridge {
       this.store.rendererIds.push(rendererId);
     }
 
-    // Ensure root exists
-    if (!this.store.nodes.has(rootId)) {
-      this.store.addNode({
-        id: rootId,
-        displayName: 'Root',
-        type: 'other',
-        parentId: null,
-        childIds: [],
-        key: null,
-      });
+    // Parse string table
+    const stringTableSize = ops[i++]!;
+    const stringTable: string[] = ['']; // index 0 = empty string
+    const stringTableEnd = i + stringTableSize;
+    while (i < stringTableEnd) {
+      const len = ops[i++]!;
+      const chars: string[] = [];
+      for (let j = 0; j < len; j++) {
+        chars.push(String.fromCharCode(ops[i++]!));
+      }
+      stringTable.push(chars.join(''));
     }
 
+    this.debugLog?.(`[OPS] stringTable=[${stringTable.join(',')}] remaining=${ops.length - i} ops`);
+
     while (i < ops.length) {
-      const op = ops[i]!;
+      const op = ops[i++]!;
 
       switch (op) {
         case TREE_OPERATION_ADD: {
-          i++; // skip op
           const id = ops[i++]!;
           const elementType = ops[i++]!;
           const parentId = ops[i++]!;
-          const ownerID = ops[i++]!; // skip owner
+          const ownerID = ops[i++]!;
           void ownerID;
-          const displayNameLength = ops[i++]!;
+          const displayNameIndex = ops[i++]!;
+          const keyIndex = ops[i++]!;
 
-          // Read display name from subsequent slots (encoded as char codes)
-          let displayName: string | null = null;
-          if (displayNameLength > 0) {
-            const chars: string[] = [];
-            for (let j = 0; j < displayNameLength; j++) {
-              chars.push(String.fromCharCode(ops[i++]!));
-            }
-            displayName = chars.join('');
-          }
-
-          const keyLength = ops[i++]!;
-          let key: string | null = null;
-          if (keyLength > 0) {
-            const chars: string[] = [];
-            for (let j = 0; j < keyLength; j++) {
-              chars.push(String.fromCharCode(ops[i++]!));
-            }
-            key = chars.join('');
-          }
+          const displayName = stringTable[displayNameIndex] || null;
+          const key = stringTable[keyIndex] || null;
 
           let type: FiberNode['type'] = 'other';
           if (elementType === ElementTypeFunction) type = 'function';
@@ -173,27 +183,31 @@ export class DevToolsBridge {
           else if (elementType === ElementTypeHostComponent) type = 'host';
           else if (elementType === ElementTypeRoot) type = 'other';
 
+          const resolvedParentId = parentId === 0 ? null : parentId;
+
           const node: FiberNode = {
             id,
             displayName,
             type,
-            parentId: parentId === 0 ? rootId : parentId,
+            parentId: resolvedParentId,
             childIds: [],
             key,
           };
 
+          this.debugLog?.(`[ADD] id=${id} type=${type} parent=${resolvedParentId} name=${displayName}`);
           this.store.addNode(node);
 
           // Add to parent's children
-          const parent = this.store.nodes.get(node.parentId!);
-          if (parent && !parent.childIds.includes(id)) {
-            parent.childIds.push(id);
+          if (resolvedParentId != null) {
+            const parent = this.store.nodes.get(resolvedParentId);
+            if (parent && !parent.childIds.includes(id)) {
+              parent.childIds.push(id);
+            }
           }
           break;
         }
 
         case TREE_OPERATION_REMOVE: {
-          i++; // skip op
           const removeCount = ops[i++]!;
           for (let j = 0; j < removeCount; j++) {
             const id = ops[i++]!;
@@ -203,7 +217,6 @@ export class DevToolsBridge {
         }
 
         case TREE_OPERATION_REORDER_CHILDREN: {
-          i++; // skip op
           const id = ops[i++]!;
           const childCount = ops[i++]!;
           const newChildIds: number[] = [];
@@ -216,35 +229,30 @@ export class DevToolsBridge {
         }
 
         case TREE_OPERATION_UPDATE_TREE_BASE_DURATION: {
-          i++; // skip op
-          i++; // skip id
-          i++; // skip duration
+          i++; // id
+          i++; // duration
           break;
         }
 
         case TREE_OPERATION_UPDATE_ERRORS_OR_WARNINGS: {
-          i++; // skip op
-          i++; // skip id
-          i++; // skip errors count
-          i++; // skip warnings count
+          i++; // id
+          i++; // errors count
+          i++; // warnings count
           break;
         }
 
         case TREE_OPERATION_REMOVE_ROOT: {
-          i++; // skip op
           break;
         }
 
         case TREE_OPERATION_SET_SUBTREE_MODE: {
-          i++; // skip op
-          i++; // skip id
-          i++; // skip mode
+          i++; // id
+          i++; // mode
           break;
         }
 
         default:
-          // Unknown operation — skip it
-          i++;
+          this.debugLog?.(`[OPS] unknown op=${op} at index=${i - 1}`);
           break;
       }
     }
