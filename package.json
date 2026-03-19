@@ -1,6 +1,6 @@
 {
   "name": "tui-devtools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "All-in-one TUI automation + DevTools — run, screenshot, interact, and inspect React component trees in terminal apps. Built for AI agents.",
   "repository": {
     "type": "git",
