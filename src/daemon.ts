@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { DevToolsServer } from './server.js';
+import { SessionManager } from './session-manager.js';
 import type { IpcRequest, IpcResponse, LogEntry } from './types.js';
 
 const BASE_DIR = path.join(process.env.HOME ?? '/tmp', '.tui-devtools');
@@ -95,6 +96,9 @@ export async function startDaemon(session: string, port: number): Promise<void> 
     logStream.write(`[${ts}] ${msg}\n`);
   };
 
+  // Session manager for PTY sessions
+  const sessionMgr = new SessionManager();
+
   // Start DevTools server
   const devtools = new DevToolsServer({
     port,
@@ -120,7 +124,7 @@ export async function startDaemon(session: string, port: number): Promise<void> 
 
       try {
         const req = JSON.parse(lines[0]!) as IpcRequest;
-        const res = await handleIpcRequest(req, devtools);
+        const res = await handleIpcRequest(req, devtools, sessionMgr, log);
         conn.write(JSON.stringify(res) + '\n');
       } catch (e) {
         conn.write(JSON.stringify({ ok: false, error: String(e) }) + '\n');
@@ -134,6 +138,7 @@ export async function startDaemon(session: string, port: number): Promise<void> 
   // Graceful shutdown
   const cleanup = () => {
     log('Shutting down...');
+    sessionMgr.killAll();
     devtools.stop();
     ipcServer.close();
     try { fs.unlinkSync(socketPath); } catch {}
@@ -146,11 +151,17 @@ export async function startDaemon(session: string, port: number): Promise<void> 
   process.on('SIGINT', cleanup);
 }
 
-async function handleIpcRequest(req: IpcRequest, devtools: DevToolsServer): Promise<IpcResponse> {
+async function handleIpcRequest(
+  req: IpcRequest,
+  devtools: DevToolsServer,
+  sessionMgr: SessionManager,
+  log: (msg: string) => void,
+): Promise<IpcResponse> {
   const store = devtools.getStore();
   const bridge = devtools.getBridge();
 
   switch (req.command) {
+    // ─── DevTools commands ───
     case 'status':
       return {
         ok: true,
@@ -161,6 +172,7 @@ async function handleIpcRequest(req: IpcRequest, devtools: DevToolsServer): Prom
           rootCount: store.roots.size,
           logCount: store.logs.length,
           rendererIds: store.rendererIds,
+          sessions: sessionMgr.list(),
         },
       };
 
@@ -186,7 +198,6 @@ async function handleIpcRequest(req: IpcRequest, devtools: DevToolsServer): Prom
         return { ok: false, error: `Component not found: ${name ?? id}` };
       }
 
-      // Request fresh data from the app
       const inspectData = await bridge.inspectElement(node.id);
 
       return {
@@ -232,6 +243,98 @@ async function handleIpcRequest(req: IpcRequest, devtools: DevToolsServer): Prom
         })),
       };
     }
+
+    // ─── PTY automation commands ───
+    case 'run': {
+      const command = req.args?.command as string;
+      const sessionId = req.args?.sessionId as string ?? 'default';
+      const cwd = req.args?.cwd as string | undefined;
+      const cols = req.args?.cols as number | undefined;
+      const rows = req.args?.rows as number | undefined;
+      const env = req.args?.env as Record<string, string> | undefined;
+
+      if (!command) return { ok: false, error: 'command is required' };
+
+      log(`[PTY] run session=${sessionId} command=${command}`);
+      const info = sessionMgr.create(sessionId, { command, cwd, cols, rows, env });
+      return { ok: true, data: info };
+    }
+
+    case 'screenshot': {
+      const sessionId = req.args?.sessionId as string ?? 'default';
+      const stripAnsi = req.args?.stripAnsi as boolean;
+      const session = sessionMgr.get(sessionId);
+      if (!session) return { ok: false, error: `Session not found: ${sessionId}` };
+
+      const text = session.screenshot({ stripAnsi });
+      return { ok: true, data: { screenshot: text, running: session.running } };
+    }
+
+    case 'press': {
+      const sessionId = req.args?.sessionId as string ?? 'default';
+      const keys = req.args?.keys as string[];
+      const session = sessionMgr.get(sessionId);
+      if (!session) return { ok: false, error: `Session not found: ${sessionId}` };
+
+      for (const key of (keys ?? [])) {
+        session.press(key);
+      }
+      return { ok: true };
+    }
+
+    case 'type': {
+      const sessionId = req.args?.sessionId as string ?? 'default';
+      const text = req.args?.text as string;
+      const session = sessionMgr.get(sessionId);
+      if (!session) return { ok: false, error: `Session not found: ${sessionId}` };
+      if (!text) return { ok: false, error: 'text is required' };
+
+      session.type(text);
+      return { ok: true };
+    }
+
+    case 'scroll': {
+      const sessionId = req.args?.sessionId as string ?? 'default';
+      const direction = (req.args?.direction as string) ?? 'down';
+      const amount = (req.args?.amount as number) ?? 1;
+      const session = sessionMgr.get(sessionId);
+      if (!session) return { ok: false, error: `Session not found: ${sessionId}` };
+
+      session.scroll(direction as 'up' | 'down', amount);
+      return { ok: true };
+    }
+
+    case 'wait': {
+      const sessionId = req.args?.sessionId as string ?? 'default';
+      const text = req.args?.text as string;
+      const timeout = (req.args?.timeout as number) ?? 30000;
+      const session = sessionMgr.get(sessionId);
+      if (!session) return { ok: false, error: `Session not found: ${sessionId}` };
+      if (!text) return { ok: false, error: 'text is required' };
+
+      const found = await session.wait(text, timeout);
+      return { ok: true, data: { found, screenshot: session.screenshot() } };
+    }
+
+    case 'resize': {
+      const sessionId = req.args?.sessionId as string ?? 'default';
+      const cols = req.args?.cols as number ?? 120;
+      const rows = req.args?.rows as number ?? 40;
+      const session = sessionMgr.get(sessionId);
+      if (!session) return { ok: false, error: `Session not found: ${sessionId}` };
+
+      session.resize(cols, rows);
+      return { ok: true };
+    }
+
+    case 'kill-session': {
+      const sessionId = req.args?.sessionId as string ?? 'default';
+      const killed = sessionMgr.kill(sessionId);
+      return { ok: killed, error: killed ? undefined : `Session not found: ${sessionId}` };
+    }
+
+    case 'sessions':
+      return { ok: true, data: sessionMgr.list() };
 
     default:
       return { ok: false, error: `Unknown command: ${req.command}` };

@@ -301,6 +301,239 @@ program
     }
   });
 
+// ═══════════════════════════════════════════
+// PTY Automation Commands (replaces agent-tui)
+// ═══════════════════════════════════════════
+
+function ensureDaemon(session: string): void {
+  if (!isDaemonRunning(session)) {
+    console.error('Daemon not running. Start with: tui-devtools start');
+    process.exit(1);
+  }
+}
+
+// ─── run ───
+program
+  .command('run <command...>')
+  .description('Run a TUI application in a virtual terminal')
+  .option('-d, --cwd <dir>', 'Working directory')
+  .option('--cols <n>', 'Terminal columns', '120')
+  .option('--rows <n>', 'Terminal rows', '40')
+  .option('--sid <id>', 'PTY session ID', 'default')
+  .action(async (commandParts: string[], cmdOpts) => {
+    const opts = program.opts();
+    const session = opts.session as string;
+    const json = opts.json as boolean;
+    const command = commandParts.join(' ');
+
+    ensureDaemon(session);
+
+    try {
+      const res = await sendIpcRequest(session, {
+        command: 'run',
+        args: {
+          command,
+          sessionId: cmdOpts.sid,
+          cwd: cmdOpts.cwd,
+          cols: parseInt(cmdOpts.cols, 10),
+          rows: parseInt(cmdOpts.rows, 10),
+        },
+      });
+      if (res.ok) {
+        const info = res.data as { id: string; pid: number; cols: number; rows: number };
+        if (json) {
+          console.log(JSON.stringify(info));
+        } else {
+          console.log(`Session started: ${info.id}`);
+          console.log(`  PID: ${info.pid}`);
+        }
+      } else {
+        console.error(`Error: ${res.error}`);
+        process.exit(1);
+      }
+    } catch (e) {
+      console.error(`Error: ${(e as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+// ─── screenshot ───
+program
+  .command('screenshot')
+  .description('Capture current terminal screen')
+  .option('--sid <id>', 'PTY session ID', 'default')
+  .option('--strip-ansi', 'Strip ANSI color codes')
+  .action(async (cmdOpts) => {
+    const opts = program.opts();
+    const session = opts.session as string;
+    const json = opts.json as boolean;
+
+    ensureDaemon(session);
+
+    try {
+      const res = await sendIpcRequest(session, {
+        command: 'screenshot',
+        args: { sessionId: cmdOpts.sid, stripAnsi: cmdOpts.stripAnsi },
+      });
+      if (res.ok) {
+        const data = res.data as { screenshot: string; running: boolean };
+        if (json) {
+          console.log(JSON.stringify(data));
+        } else {
+          console.log(`Screenshot:${data.running ? '' : ' [stopped]'}`);
+          console.log(data.screenshot);
+        }
+      } else {
+        console.error(`Error: ${res.error}`);
+      }
+    } catch (e) {
+      console.error(`Error: ${(e as Error).message}`);
+    }
+  });
+
+// ─── press ───
+program
+  .command('press <keys...>')
+  .description('Send key press(es) to the terminal')
+  .option('--sid <id>', 'PTY session ID', 'default')
+  .action(async (keys: string[], cmdOpts) => {
+    const opts = program.opts();
+    const session = opts.session as string;
+
+    ensureDaemon(session);
+
+    try {
+      const res = await sendIpcRequest(session, {
+        command: 'press',
+        args: { sessionId: cmdOpts.sid, keys },
+      });
+      if (res.ok) {
+        console.log('✓ Key pressed');
+      } else {
+        console.error(`Error: ${res.error}`);
+      }
+    } catch (e) {
+      console.error(`Error: ${(e as Error).message}`);
+    }
+  });
+
+// ─── type ───
+program
+  .command('type <text>')
+  .description('Type text into the terminal')
+  .option('--sid <id>', 'PTY session ID', 'default')
+  .action(async (text: string, cmdOpts) => {
+    const opts = program.opts();
+    const session = opts.session as string;
+
+    ensureDaemon(session);
+
+    try {
+      const res = await sendIpcRequest(session, {
+        command: 'type',
+        args: { sessionId: cmdOpts.sid, text },
+      });
+      if (res.ok) {
+        console.log('✓ Text typed');
+      } else {
+        console.error(`Error: ${res.error}`);
+      }
+    } catch (e) {
+      console.error(`Error: ${(e as Error).message}`);
+    }
+  });
+
+// ─── wait ───
+program
+  .command('wait <text>')
+  .description('Wait for text to appear on screen')
+  .option('--sid <id>', 'PTY session ID', 'default')
+  .option('--timeout <ms>', 'Timeout in milliseconds', '30000')
+  .action(async (text: string, cmdOpts) => {
+    const opts = program.opts();
+    const session = opts.session as string;
+    const json = opts.json as boolean;
+
+    ensureDaemon(session);
+
+    try {
+      const res = await sendIpcRequest(session, {
+        command: 'wait',
+        args: { sessionId: cmdOpts.sid, text, timeout: parseInt(cmdOpts.timeout, 10) },
+      });
+      if (res.ok) {
+        const data = res.data as { found: boolean; screenshot: string };
+        if (json) {
+          console.log(JSON.stringify(data));
+        } else {
+          console.log(data.found ? `✓ Found: "${text}"` : `✗ Timeout waiting for: "${text}"`);
+        }
+      } else {
+        console.error(`Error: ${res.error}`);
+      }
+    } catch (e) {
+      console.error(`Error: ${(e as Error).message}`);
+    }
+  });
+
+// ─── kill (PTY session) ───
+program
+  .command('kill-session')
+  .description('Kill a PTY session')
+  .option('--sid <id>', 'PTY session ID', 'default')
+  .action(async (cmdOpts) => {
+    const opts = program.opts();
+    const session = opts.session as string;
+
+    ensureDaemon(session);
+
+    try {
+      const res = await sendIpcRequest(session, {
+        command: 'kill-session',
+        args: { sessionId: cmdOpts.sid },
+      });
+      if (res.ok) {
+        console.log(`Session killed: ${cmdOpts.sid}`);
+      } else {
+        console.error(`Error: ${res.error}`);
+      }
+    } catch (e) {
+      console.error(`Error: ${(e as Error).message}`);
+    }
+  });
+
+// ─── sessions (list PTY sessions) ───
+program
+  .command('sessions')
+  .description('List PTY sessions')
+  .action(async () => {
+    const opts = program.opts();
+    const session = opts.session as string;
+    const json = opts.json as boolean;
+
+    ensureDaemon(session);
+
+    try {
+      const res = await sendIpcRequest(session, { command: 'sessions' });
+      if (res.ok) {
+        const sessions = res.data as Array<{ id: string; command: string; pid: number; running: boolean; cols: number; rows: number }>;
+        if (json) {
+          console.log(JSON.stringify(sessions, null, 2));
+        } else if (sessions.length === 0) {
+          console.log('No active PTY sessions');
+        } else {
+          for (const s of sessions) {
+            console.log(`  ${s.id} — ${s.command} [${s.running ? 'running' : 'stopped'}] ${s.cols}x${s.rows} pid:${s.pid}`);
+          }
+        }
+      } else {
+        console.error(`Error: ${res.error}`);
+      }
+    } catch (e) {
+      console.error(`Error: ${(e as Error).message}`);
+    }
+  });
+
 // ─── Internal: daemon entry point ───
 if (process.argv[2] === '__daemon__') {
   const session = process.argv[3] ?? DEFAULT_SESSION;

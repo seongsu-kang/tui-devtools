@@ -13,14 +13,25 @@
     "dev": "tsx bin/tui-devtools.ts",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["tui", "devtools", "ink", "react", "terminal", "debugging", "ai-agent"],
+  "keywords": [
+    "tui",
+    "devtools",
+    "ink",
+    "react",
+    "terminal",
+    "debugging",
+    "ai-agent"
+  ],
   "author": "seongsu-kang",
   "license": "MIT",
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/headless": "^6.0.0",
     "commander": "^12.0.0",
+    "node-pty": "^1.1.0",
     "ws": "^8.16.0"
   },
   "devDependencies": {
