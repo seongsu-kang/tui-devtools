@@ -134,7 +134,10 @@ export class PtySession {
     const buffer = this.terminal.buffer.active;
     const lines: string[] = [];
 
-    for (let i = 0; i < this.rows; i++) {
+    // Include scrollback + visible area for full capture
+    // (Ink redraws by moving cursor up, so content may be in scrollback)
+    const totalLines = buffer.baseY + this.rows;
+    for (let i = 0; i < totalLines; i++) {
       const line = buffer.getLine(i);
       if (line) {
         lines.push(line.translateToString(true));
